@@ -1,0 +1,14 @@
+version: '3.9'
+
+services:
+  api:
+    build: .
+    ports:
+      - "8001:8000"
+    volumes:
+      - .:/app
+      - ./downloads:/app/downloads
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DOWNLOADS_DIR=/app/downloads
+    restart: unless-stopped
