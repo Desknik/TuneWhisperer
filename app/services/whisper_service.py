@@ -79,9 +79,10 @@ class WhisperService:
         
         Args:
             file_path: Caminho do arquivo de áudio
+            force_language: Código do idioma forçado
             
         Returns:
-            Resultado da transcrição
+            Resultado da transcrição no formato padronizado
         """
         try:
             # Transcrever com timestamps
@@ -112,13 +113,18 @@ class WhisperService:
             file_duration = 0.0
             if processed_segments:
                 file_duration = processed_segments[-1]["end"]
+                
+            # Criar texto completo
+            full_text = " ".join([seg["text"] for seg in processed_segments])
             
+            # Retornar no formato padronizado
             return {
                 "language": info.language,
                 "language_probability": info.language_probability,
-                "duration": info.duration,
+                "segments": processed_segments,
                 "file_duration": file_duration,
-                "segments": processed_segments
+                "text": full_text,
+                "provider": "whisper"
             }
             
         except Exception as e:

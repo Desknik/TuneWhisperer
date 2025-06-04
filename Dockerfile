@@ -20,6 +20,10 @@ COPY . .
 # Criar diretório para downloads
 RUN mkdir -p /app/downloads
 
+# Variáveis de ambiente
+ENV ELEVENLABS_API_KEY=""
+ENV WHISPER_DEFAULT_MODEL="base"
+
 # Expor porta
 EXPOSE 8000
 

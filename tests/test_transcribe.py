@@ -220,3 +220,55 @@ class TestTranscribeAPI:
         })
         
         assert response.status_code == 404
+    
+    def test_providers_endpoint(self):
+        """Testa o endpoint de provedores."""
+        response = client.get("/api/transcribe/providers")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "whisper" in data
+        assert "elevenlabs" in data
+        
+        whisper_info = data["whisper"]
+        assert whisper_info["name"] == "Faster Whisper"
+        assert whisper_info["available"] is True
+        assert whisper_info["supports_translation"] is True
+        assert "tiny" in whisper_info["supported_models"]
+        
+        elevenlabs_info = data["elevenlabs"]
+        assert elevenlabs_info["name"] == "ElevenLabs Speech-to-Text"
+        assert elevenlabs_info["supports_translation"] is False
+        assert "scribe_v1" in elevenlabs_info["supported_models"]
+    
+    def test_transcribe_with_invalid_provider(self, temp_audio_file):
+        """Testa transcrição com provedor inválido."""
+        response = client.post("/api/transcribe/transcribe", json={
+            "file_path": temp_audio_file,
+            "provider": "invalid_provider"
+        })
+        
+        assert response.status_code == 400
+        assert "Provedor deve ser 'whisper' ou 'elevenlabs'" in response.json()["detail"]
+    
+    def test_transcribe_request_with_provider_field(self, temp_audio_file):
+        """Testa que o campo provider é aceito na requisição."""
+        # Teste com Whisper
+        response = client.post("/api/transcribe/transcribe", json={
+            "file_path": temp_audio_file,
+            "provider": "whisper",
+            "model_size": "tiny"
+        })
+        
+        # Vai falhar porque é um arquivo fake, mas deve aceitar o provider
+        assert response.status_code in [422, 500]  # Erro de validação ou processamento
+        
+        # Teste com ElevenLabs (sem API key configurada)
+        response = client.post("/api/transcribe/transcribe", json={
+            "file_path": temp_audio_file,
+            "provider": "elevenlabs"
+        })
+        
+        # Deve retornar erro de API key não configurada
+        assert response.status_code == 400
+        assert "API key da ElevenLabs não configurada" in response.json()["detail"]

@@ -7,8 +7,8 @@ API RESTful para processamento de músicas com YouTube Music, Whisper e traduç�
 - **Busca de músicas** no YouTube Music com extração de cores da capa
 - **Download de áudios** em formato MP3
 - **Corte de trechos** específicos de áudios
-- **Transcrição de áudios** com timestamps usando Whisper
-- **Tradução opcional** das transcrições
+- **Transcrição de áudios** com timestamps usando Whisper ou ElevenLabs
+- **Tradução opcional** das transcrições com suporte a múltiplos idiomas
 
 ## 🚀 Início Rápido
 
@@ -124,19 +124,34 @@ Corta um trecho específico de áudio.
 ```
 
 #### 🧠 POST /api/v1/transcribe
-Transcreve áudio com timestamps.
+Transcreve áudio com timestamps usando Whisper (local) ou ElevenLabs (API).
 
-**Body (sem tradução):**
-```json
-{
-  "file_path": "/app/downloads/7wtfhZwyrcc_trimmed_10_60.mp3"
-}
-```
+**Parâmetros principais:**
+- `provider`: `"whisper"` (padrão) ou `"elevenlabs"`
+- `model`: Modelo a ser utilizado (depende do provedor)
+- `force_language`: Código do idioma do áudio (ex: "pt", "en")
+- `translate_to`: Código do idioma para tradução (ex: "pt", "en")
 
-**Body (com tradução):**
+**Modelos disponíveis:**
+- **Whisper**: `"tiny"`, `"base"`, `"small"`, `"medium"`, `"large"` (padrão: `"base"`)
+- **ElevenLabs**: `"scribe_v1"`, `"scribe_v1_experimental"` (padrão: `"scribe_v1"`)
+
+**Body (Whisper - sem tradução):**
 ```json
 {
   "file_path": "/app/downloads/7wtfhZwyrcc_trimmed_10_60.mp3",
+  "provider": "whisper",
+  "model": "base"
+}
+```
+
+**Body (ElevenLabs - com tradução):**
+```json
+{
+  "file_path": "/app/downloads/7wtfhZwyrcc_trimmed_10_60.mp3",
+  "provider": "elevenlabs",
+  "model": "scribe_v1",
+  "force_language": "en",
   "translate_to": "pt"
 }
 ```
@@ -145,8 +160,10 @@ Transcreve áudio com timestamps.
 ```json
 {
   "language": "en",
+  "language_probability": 0.95,
   "translated_to": "pt",
   "file_duration": 50.0,
+  "provider": "elevenlabs",
   "segments": [
     {
       "start": 0.0,
@@ -155,6 +172,31 @@ Transcreve áudio com timestamps.
       "translated_text": "Dor, você me fez um crente"
     }
   ]
+}
+```
+
+#### 🔍 GET /api/v1/providers
+Retorna informações sobre os provedores de transcrição disponíveis.
+
+**Resposta:**
+```json
+{
+  "whisper": {
+    "name": "Faster Whisper",
+    "description": "Transcrição local usando Faster Whisper",
+    "available": true,
+    "supports_translation": true,
+    "supported_models": ["tiny", "base", "small", "medium", "large"],
+    "default_model": "base"
+  },
+  "elevenlabs": {
+    "name": "ElevenLabs Speech-to-Text",
+    "description": "Transcrição via API da ElevenLabs",
+    "available": false,
+    "supports_translation": true,
+    "supported_models": ["scribe_v1", "scribe_v1_experimental"],
+    "default_model": "scribe_v1"
+  }
 }
 ```
 
@@ -175,7 +217,26 @@ docker-compose exec api pytest tests/ -v
 ### Variáveis de Ambiente
 
 - `DOWNLOADS_DIR`: Diretório para arquivos baixados (padrão: `./downloads`)
+- `ELEVENLABS_API_KEY`: Chave da API ElevenLabs (opcional, necessária apenas para usar o provedor ElevenLabs)
 - `PYTHONUNBUFFERED`: Saída Python sem buffer (padrão: `1`)
+
+### Configuração do ElevenLabs
+
+Para usar o provedor ElevenLabs, você precisa:
+
+1. Criar uma conta na [ElevenLabs](https://elevenlabs.io/)
+2. Obter sua API key no painel de configurações
+3. Criar um arquivo `.env` na raiz do projeto:
+
+```bash
+ELEVENLABS_API_KEY=your_api_key_here
+```
+
+**Vantagens do ElevenLabs:**
+- Transcrição mais precisa para alguns idiomas
+- Melhor detecção de eventos sonoros
+- Identificação de falantes
+- Processamento em nuvem (sem uso de recursos locais)
 
 ### Formatos de Tempo Suportados
 
@@ -196,6 +257,20 @@ Para as rotas de corte, você pode usar:
 - `ko` - Coreano
 - E muitos outros...
 
+### Comparação entre Provedores
+
+| Característica | Whisper (Local) | ElevenLabs (API) |
+|---|---|---|
+| **Processamento** | Local (CPU/GPU) | Nuvem |
+| **Precisão** | Boa | Excelente |
+| **Velocidade** | Média | Rápida |
+| **Custo** | Gratuito | Pago (após limite) |
+| **Privacidade** | Total | Dados enviados para API |
+| **Modelos** | 5 opções | 2 opções |
+| **Tradução** | ✅ | ✅ |
+| **Eventos sonoros** | ❌ | ✅ |
+| **Identificação de falantes** | ❌ | ✅ |
+
 ## 📁 Estrutura do Projeto
 
 ```
@@ -210,7 +285,8 @@ app/
 │   ├── ytmusic_service.py    # Integração YouTube Music
 │   ├── download_service.py   # Download de áudios
 │   ├── audio_service.py      # Manipulação de áudio
-│   └── whisper_service.py    # Transcrição e tradução
+│   ├── whisper_service.py    # Transcrição local com Whisper
+│   └── elevenlabs_service.py # Transcrição via API ElevenLabs
 └── utils/
     └── colors.py        # Extração de cores de imagens
 tests/                   # Testes automatizados
@@ -220,7 +296,8 @@ downloads/              # Arquivos baixados (criado automaticamente)
 ## 🔧 Tecnologias Utilizadas
 
 - **FastAPI** - Framework web moderno e rápido
-- **faster-whisper** - Transcrição de áudio otimizada
+- **faster-whisper** - Transcrição de áudio local otimizada
+- **ElevenLabs API** - Transcrição de áudio em nuvem com alta precisão
 - **deep-translator** - Tradução de textos
 - **ytmusicapi** - API não oficial do YouTube Music
 - **yt-dlp** - Download de vídeos/áudios do YouTube
