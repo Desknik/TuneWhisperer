@@ -120,31 +120,34 @@ class ElevenLabsService:
     def _words_to_segments(self, words: List[Dict]) -> List[Dict]:
         """
         Converte a lista de palavras em segmentos de texto.
-        Agrupa palavras próximas em segmentos menores e mais manejáveis.
+        Agrupa palavras próximas em frases completas, priorizando pontuação final.
         """
         if not words:
             return []
-        
+
         segments = []
         current_segment = {
-            "start": 0,
-            "end": 0,
+            "start": None,
+            "end": None,
             "text": "",
             "words": []
         }
-        
-        segment_max_duration = 5.0  # Máximo de 5 segundos por segmento
-        segment_max_words = 15      # Máximo de 15 palavras por segmento
-        
+
+        segment_max_duration = 8.0  # Permite frases maiores se necessário
+        segment_max_words = 25      # Permite mais palavras por segmento
+        segment_max_chars = 120     # Limite de caracteres por segmento
+
+        def is_sentence_end(word_text):
+            return word_text.strip().endswith(('.', '?', '!'))
+
         for word in words:
-            # Filtrar apenas palavras (não espaços)
             if word.get("type") != "word":
                 continue
-            
+
             word_start = word.get("start", 0)
             word_end = word.get("end", 0)
             word_text = word.get("text", "")
-            
+
             # Inicializar primeiro segmento
             if not current_segment["words"]:
                 current_segment["start"] = word_start
@@ -152,103 +155,259 @@ class ElevenLabsService:
                 current_segment["text"] = word_text
                 current_segment["words"].append(word)
                 continue
-            
-            # Verificar se deve iniciar novo segmento (por duração OU número de palavras)
-            segment_duration = word_end - current_segment["start"]
-            should_split = (
-                (segment_duration > segment_max_duration and current_segment["words"]) or
-                (len(current_segment["words"]) >= segment_max_words)
-            )
-            
+
+            # Adicionar palavra ao segmento atual
+            current_segment["end"] = word_end
+            current_segment["text"] += " " + word_text
+            current_segment["words"].append(word)
+
+            # Critérios para cortar segmento:
+            # 1. Chegou ao fim de frase (pontuação final) E já tem pelo menos 4 palavras
+            # 2. Excedeu o número máximo de palavras
+            # 3. Excedeu o tamanho máximo de caracteres
+            # 4. Excedeu a duração máxima
+
+            segment_duration = current_segment["end"] - current_segment["start"]
+            should_split = False
+
+            if is_sentence_end(word_text) and len(current_segment["words"]) >= 4:
+                should_split = True
+            elif len(current_segment["words"]) >= segment_max_words:
+                should_split = True
+            elif len(current_segment["text"]) >= segment_max_chars:
+                should_split = True
+            elif segment_duration > segment_max_duration:
+                should_split = True
+
             if should_split:
-                # Finalizar segmento atual
                 segments.append({
                     "start": current_segment["start"],
                     "end": current_segment["end"],
                     "text": current_segment["text"].strip()
                 })
-                
-                # Iniciar novo segmento
                 current_segment = {
-                    "start": word_start,
-                    "end": word_end,
-                    "text": word_text,
-                    "words": [word]
+                    "start": None,
+                    "end": None,
+                    "text": "",
+                    "words": []
                 }
-            else:
-                # Adicionar palavra ao segmento atual (com espaço)
-                current_segment["end"] = word_end
-                current_segment["text"] += " " + word_text
-                current_segment["words"].append(word)
-        
-        # Adicionar último segmento
+
+        # Adicionar último segmento se houver
         if current_segment["words"]:
             segments.append({
                 "start": current_segment["start"],
                 "end": current_segment["end"],
                 "text": current_segment["text"].strip()
             })
-        
-        # Pós-processamento: dividir segmentos muito longos com base na pontuação
-        segments = self._split_long_segments_by_punctuation(segments)
-        
+
+        # Não aplicar mais divisões por pontuação aqui, pois já priorizamos frases completas
+        # Se algum segmento ainda for muito longo, dividir por pontuação secundária
+        segments = self._split_very_long_segments(segments)
+
         return segments
-    
-    def _split_long_segments_by_punctuation(self, segments: List[Dict]) -> List[Dict]:
+
+    def _split_very_long_segments(self, segments: List[Dict]) -> List[Dict]:
         """
-        Divide segmentos muito longos usando pontuação como critério de quebra.
+        Divide segmentos muito longos usando pontuação secundária ou tamanho de palavra.
+        Só é chamado se o segmento ultrapassar um limite alto de caracteres.
         """
         refined_segments = []
-        max_text_length = 100  # Máximo de caracteres por segmento
-        
+        max_text_length = 160  # Só divide se for muito longo
+
         for segment in segments:
             text = segment["text"]
-            
-            # Se o segmento não é muito longo, manter como está
             if len(text) <= max_text_length:
                 refined_segments.append(segment)
                 continue
-            
-            # Tentar dividir por pontuação
+
+            # Tenta dividir por pontuação principal
             sentences = self._split_by_punctuation(text)
-            if len(sentences) <= 1:
-                # Não conseguiu dividir, manter como está
-                refined_segments.append(segment)
+            if len(sentences) > 1:
+                # Dividir tempo proporcionalmente
+                segment_duration = segment["end"] - segment["start"]
+                total_chars = len(text)
+                current_time = segment["start"]
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+                    sentence_duration = (len(sentence) / total_chars) * segment_duration
+                    end_time = current_time + sentence_duration
+                    refined_segments.append({
+                        "start": round(current_time, 2),
+                        "end": round(end_time, 2),
+                        "text": sentence
+                    })
+                    current_time = end_time
                 continue
-            
-            # Dividir proporcionalmente o tempo entre as sentenças
-            segment_duration = segment["end"] - segment["start"]
-            total_chars = len(text)
-            current_time = segment["start"]
-            
-            for i, sentence in enumerate(sentences):
-                sentence = sentence.strip()
-                if not sentence:
-                    continue
-                
-                # Calcular duração proporcional baseada no tamanho do texto
-                sentence_duration = (len(sentence) / total_chars) * segment_duration
-                end_time = current_time + sentence_duration
-                
-                refined_segments.append({
-                    "start": round(current_time, 2),
-                    "end": round(end_time, 2),
-                    "text": sentence
-                })
-                
-                current_time = end_time
-        
+
+            # Se não conseguiu dividir, tenta por vírgulas, ponto e vírgula, etc.
+            sentences = self._split_by_secondary_punctuation(text)
+            if len(sentences) > 1:
+                segment_duration = segment["end"] - segment["start"]
+                total_chars = len(text)
+                current_time = segment["start"]
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+                    sentence_duration = (len(sentence) / total_chars) * segment_duration
+                    end_time = current_time + sentence_duration
+                    refined_segments.append({
+                        "start": round(current_time, 2),
+                        "end": round(end_time, 2),
+                        "text": sentence
+                    })
+                    current_time = end_time
+                continue
+
+            # Se ainda não conseguiu dividir, mantém como está
+            refined_segments.append(segment)
+
         return refined_segments
-    
+
     def _split_by_punctuation(self, text: str) -> List[str]:
         """
-        Divide o texto por pontuação (ponto, vírgula, ponto e vírgula, etc).
+        Divide o texto por pontuação principal (ponto final, exclamação, interrogação).
         """
         import re
-        # Dividir por pontos, exclamações, interrogações, vírgulas e ponto-e-vírgula
-        sentences = re.split(r'[.!?;,]\s*', text)
-        return [s.strip() for s in sentences if s.strip()]
+        # Dividir por pontos, exclamações, interrogações, mantendo a pontuação
+        pattern = r'([.!?])'
+        # Primeiro adiciona um espaço após a pontuação, se necessário
+        text = re.sub(pattern + r'([^\s])', r'\1 \2', text)
+        # Agora divide por pontuação
+        segments = re.split(r'[.!?]\s+', text)
+        
+        # Remover segmentos vazios
+        return [s.strip() for s in segments if s.strip()]
     
+    def _split_by_secondary_punctuation(self, text: str) -> List[str]:
+        """
+        Divide o texto por pontuação secundária (vírgulas, ponto e vírgula, etc.)
+        quando a pontuação principal não é suficiente.
+        """
+        import re
+        # Dividir por vírgulas, ponto e vírgula, dois-pontos
+        segments = re.split(r'[,;:]\s*', text)
+        
+        # Limitar tamanho dos segmentos
+        max_segment_length = 60
+        result = []
+        
+        for segment in segments:
+            segment = segment.strip()
+            if not segment:
+                continue
+                
+            # Se o segmento ainda é muito longo, dividir por espaços
+            if len(segment) > max_segment_length:
+                words = segment.split()
+                current_segment = []
+                current_length = 0
+                
+                for word in words:
+                    if current_length + len(word) + 1 > max_segment_length and current_segment:
+                        result.append(" ".join(current_segment))
+                        current_segment = [word]
+                        current_length = len(word)
+                    else:
+                        current_segment.append(word)
+                        current_length += len(word) + 1
+                
+                if current_segment:
+                    result.append(" ".join(current_segment))
+            else:
+                result.append(segment)
+        
+        return result
+
+    def _refine_segments_semantically(self, segments: List[Dict]) -> List[Dict]:
+        """
+        Refina os segmentos para garantir coerência semântica.
+        Evita quebrar no meio de frases ou expressões comuns.
+        """
+        # Se houver poucos segmentos, não precisa refinar
+        if len(segments) <= 1:
+            return segments
+            
+        refined = []
+        
+        for segment in segments:
+            text = segment["text"].strip()
+            
+            # Verificar se o segmento é muito longo (mais de 100 caracteres)
+            if len(text) > 100:
+                # Tentar dividir semanticamente
+                parts = self._smart_text_split(text)
+                if len(parts) > 1:
+                    # Dividir o tempo proporcionalmente
+                    segment_duration = segment["end"] - segment["start"]
+                    total_chars = len(text)
+                    current_time = segment["start"]
+                    
+                    for part in parts:
+                        part = part.strip()
+                        if not part:
+                            continue
+                        
+                        part_duration = (len(part) / total_chars) * segment_duration
+                        end_time = current_time + part_duration
+                        
+                        refined.append({
+                            "start": round(current_time, 2),
+                            "end": round(end_time, 2),
+                            "text": part
+                        })
+                        
+                        current_time = end_time
+                    continue
+            
+            # Se não precisou dividir, manter como está
+            refined.append(segment)
+        
+        return refined
+    
+    def _smart_text_split(self, text: str) -> List[str]:
+        """
+        Divide o texto de forma inteligente, considerando estruturas linguísticas.
+        """
+        # Primeiro tenta dividir por pontuação
+        parts = self._split_by_punctuation(text)
+        if len(parts) > 1:
+            return parts
+        
+        # Depois tenta por vírgulas e ponto-e-vírgula
+        parts = self._split_by_secondary_punctuation(text)
+        if len(parts) > 1:
+            return parts
+        
+        # Se ainda não conseguiu dividir e o texto é longo, força divisão
+        if len(text) > 80:
+            words = text.split()
+            mid = len(words) // 2
+            
+            # Busca o melhor ponto de divisão próximo ao meio
+            best_split = mid
+            for i in range(max(0, mid - 3), min(len(words), mid + 3)):
+                # Evita dividir entre palavras que normalmente vão juntas
+                # como artigos e substantivos, preposições e seus objetos
+                if i < len(words) - 1:
+                    curr_word = words[i].lower()
+                    next_word = words[i + 1].lower()
+                    
+                    # Evitar dividir após artigos, preposições, etc.
+                    avoid_split_after = {'a', 'an', 'the', 'to', 'in', 'on', 'of', 'for', 'with',
+                                         'um', 'uma', 'o', 'a', 'os', 'as', 'de', 'para', 'com', 'em'}
+                    if curr_word in avoid_split_after:
+                        continue
+                    
+                    best_split = i + 1
+                    break
+            
+            return [" ".join(words[:best_split]), " ".join(words[best_split:])]
+        
+        return [text]
+
     def _calculate_file_duration(self, words: List[Dict]) -> float:
         """Calcula a duração do arquivo baseada nas palavras."""
         if not words:
