@@ -112,18 +112,53 @@ class YouTubeMusicService:
         """
         try:
             loop = asyncio.get_event_loop()
-            song_info = await loop.run_in_executor(
+            song_data = await loop.run_in_executor(
                 None,
                 lambda: self.ytmusic.get_song(video_id)
             )
             
-            if song_info:
+            if song_data and "videoDetails" in song_data:
+                video_details = song_data["videoDetails"]
+                
+                # Extrair thumbnail de maior qualidade
+                thumbnail_data = video_details.get("thumbnail", {})
+                thumbnails = thumbnail_data.get("thumbnails", [])
+                thumbnail_url = thumbnails[-1].get("url", "") if thumbnails else ""
+                
+                # Extrair título e autor
+                title = video_details.get("title", "")
+                artist = video_details.get("author", "")
+                
+                # Converter duração de segundos para formato MM:SS
+                length_seconds = video_details.get("lengthSeconds", "")
+                duration = ""
+                if length_seconds:
+                    try:
+                        seconds = int(length_seconds)
+                        minutes = seconds // 60
+                        remaining_seconds = seconds % 60
+                        duration = f"{minutes}:{remaining_seconds:02d}"
+                    except (ValueError, TypeError):
+                        duration = ""
+                
+                # Tentar extrair informações do microformat para mais detalhes
+                microformat = song_data.get("microformat", {})
+                microformat_data = microformat.get("microformatDataRenderer", {})
+                
+                # Usar tags como fonte alternativa para artista/álbum se disponível
+                tags = microformat_data.get("tags", [])
+                album = ""
+                if len(tags) >= 2:
+                    # Normalmente o segundo tag é o álbum
+                    album = tags[1] if tags[1] != title else ""
+                
                 return {
-                    "title": song_info.get("title", ""),
-                    "artist": ", ".join([artist.get("name", "") for artist in song_info.get("artists", [])]),
-                    "album": song_info.get("album", {}).get("name", ""),
-                    "duration": song_info.get("duration", ""),
-                    "videoId": video_id
+                    "title": title,
+                    "artist": artist,
+                    "album": album,
+                    "duration": duration,
+                    "videoId": video_id,
+                    "thumbnail": thumbnail_url
                 }
             
             return None

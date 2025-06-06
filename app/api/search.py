@@ -13,47 +13,48 @@ async def search_music(
     limit: int = Query(10, ge=1, le=50, description="Número máximo de resultados")
 ):
     """
-    Pesquisa músicas no YouTube Music e retorna resultados com cores dominantes da capa.
+    Pesquisa músicas no YouTube Music.
     """
     try:
         ytmusic_service = YouTubeMusicService()
-        color_extractor = ColorExtractor()
         
         # Buscar músicas
         search_results = await ytmusic_service.search(query, limit)
         
         if not search_results:
             return []
-          # Extrair cores das thumbnails em paralelo
-        tasks = []
-        for result in search_results:
-            if result.get("thumbnail"):
-                task = color_extractor.extract_colors_from_url(result["thumbnail"])
-                tasks.append(task)
-            else:
-                # Criar corrotina que retorna lista vazia
-                async def empty_colors():
-                    return []
-                tasks.append(empty_colors())
-        
-        colors_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Combinar resultados com cores
-        enhanced_results = []
-        for i, result in enumerate(search_results):
-            colors = colors_results[i] if i < len(colors_results) and not isinstance(colors_results[i], Exception) else []
             
-            enhanced_result = {
-                "title": result.get("title", ""),
-                "artist": result.get("artist", ""),
-                "videoId": result.get("videoId", ""),
-                "thumbnail": result.get("thumbnail", ""),
-                "duration": result.get("duration", ""),
-                "colors": colors
-            }
-            enhanced_results.append(enhanced_result)
-        
-        return enhanced_results
+        return search_results
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro na busca: {str(e)}")
+
+@router.get("/song/{video_id}")
+async def get_song_details(
+    video_id: str,
+):
+    """
+    Obtém detalhes de uma música específica incluindo as cores da thumbnail.
+    """
+    try:
+        ytmusic_service = YouTubeMusicService()
+        color_extractor = ColorExtractor()
+        
+        # Buscar informações da música
+        song_info = await ytmusic_service.get_song_info(video_id)
+        
+        if not song_info:
+            raise HTTPException(status_code=404, detail="Música não encontrada")
+            
+        # Extrair cores da thumbnail
+        colors = []
+        if song_info.get("thumbnail"):
+            colors = await color_extractor.extract_colors_from_url(song_info["thumbnail"])
+            
+        # Adicionar cores ao resultado
+        song_info["colors"] = colors
+        
+        return song_info
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao obter detalhes da música: {str(e)}")
